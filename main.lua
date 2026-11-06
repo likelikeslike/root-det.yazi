@@ -31,13 +31,18 @@ end
 -- Markers must be read in sync context: async entry() cannot see state written by setup().
 local get_ctx = ya.sync(function(state)
   local h = cx.active.current.hovered
-  if not h then
-    return { markers = state.root_markers or ROOT_MARKERS }
+  local selected = {}
+  for _, file in pairs(cx.active.selected) do
+    selected[#selected + 1] = {
+      url = tostring(file.url),
+      is_dir = file.cha.is_dir,
+    }
   end
   return {
     markers = state.root_markers or ROOT_MARKERS,
-    url = tostring(h.url),
-    is_dir = h.cha.is_dir,
+    selected = selected,
+    url = h and tostring(h.url),
+    is_dir = h and h.cha.is_dir,
     cwd = tostring(cx.active.current.cwd),
   }
 end)
@@ -57,21 +62,32 @@ local function relativize(path, root)
   return path
 end
 
+local function target_root(target, ctx)
+  local url = Url(target.url)
+  local start_url = target.is_dir and url or url.parent
+  return detect_root(start_url, ctx.markers) or ctx.cwd
+end
+
 local function entry(_, job)
   local ctx = get_ctx()
-  if not ctx.url then
-    return
-  end
-
-  local target_url = Url(ctx.url)
-  local start_url = ctx.is_dir and target_url or target_url.parent
-  local root = detect_root(start_url, ctx.markers) or ctx.cwd
-
   local action = job.args and job.args[1] or "copy"
   if action == "cd" then
-    ya.emit("cd", { root })
+    if ctx.url then
+      ya.emit("cd", { target_root(ctx, ctx) })
+    end
   else
-    ya.clipboard(relativize(ctx.url, root))
+    local targets = ctx.selected
+    if #targets == 0 and ctx.url then
+      targets = { ctx }
+    end
+
+    local paths = {}
+    for _, target in ipairs(targets) do
+      paths[#paths + 1] = relativize(target.url, target_root(target, ctx))
+    end
+    if #paths > 0 then
+      ya.clipboard(table.concat(paths, "\n"))
+    end
   end
 end
 
